@@ -1,0 +1,56 @@
+{
+    "nexus_game_domain": "tcgcardshopsimulator",
+    "thunderstore_game_domain": "tcg-card-shop-simulator",
+    "mods": [
+        {
+            "mod_id": 107,
+            "name": "AutoCardPlace",
+            "last_processed_version": null
+        },
+        {
+            "mod_id": 9,
+            "name": "AutoSetPrices",
+            "last_processed_version": null
+        },
+        {
+            "mod_id": 69,
+            "name": "Carpet",
+            "last_processed_version": null
+        },
+        {
+            "mod_id": 13,
+            "name": "FastWorkbench",
+            "last_processed_version": null
+        },
+        {
+            "mod_id": 3,
+            "name": "FastPackOpening",
+            "last_processed_version": null
+        },
+        {
+            "mod_id": 14,
+            "name": "HandIsNotFull",
+            "last_processed_version": null
+        },
+        {
+            "mod_id": 280,
+            "name": "LofiSoundForCashierEars",
+            "last_processed_version": null
+        },
+        {
+            "mod_id": 89,
+            "name": "SoundReplacer",
+            "last_processed_version": null
+        },
+        {
+            "mod_id": 189,
+            "name": "ShopMusicRemix",
+            "last_processed_version": null
+        },
+        {
+            "mod_id": 69,
+            "name": "TextureReplacer",
+            "last_processed_version": null
+        }
+    ]
+}
