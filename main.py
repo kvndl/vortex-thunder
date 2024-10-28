@@ -10,6 +10,7 @@ import zipfile
 from datetime import datetime
 import time
 import re
+import hashlib
 from PIL import Image
 
 # Ensure your environment variables are set
@@ -132,7 +133,53 @@ def create_changelog(package_path, mod_info):
     except Exception as e:
         logging.error(f"Failed to create CHANGELOG.md at {changelog_path}: {e}")
 
-def prepare_package(mod_info, file_path, mod_entry, nexus_game_domain, all_mods):
+def create_icon(package_path, mod_entry):
+    """
+    Creates an icon.png with a solid color determined by the mod's name.
+    Only creates the icon if it doesn't already exist or if last_processed_version is null.
+    """
+    mod_name = mod_entry.get('name', 'Unknown Mod').replace(' ', '_')
+    last_processed_version = mod_entry.get('last_processed_version')
+    icons_dir = 'icons'
+    os.makedirs(icons_dir, exist_ok=True)
+    icon_filename = f"{mod_name}.png"
+    icon_path = os.path.join(icons_dir, icon_filename)
+
+    # Check if the icon already exists and last_processed_version is not null
+    if os.path.exists(icon_path) and last_processed_version is not None:
+        logging.info(f"Icon for mod '{mod_name}' already exists. Using existing icon.")
+    else:
+        logging.info(f"Creating icon for mod '{mod_name}'.")
+        # Generate the icon
+        try:
+            # Generate a consistent color based on the mod's name
+            hash_object = hashlib.sha256(mod_name.encode())
+            hex_dig = hash_object.hexdigest()
+            # Use the first 6 characters to get RGB values
+            r = int(hex_dig[0:2], 16)
+            g = int(hex_dig[2:4], 16)
+            b = int(hex_dig[4:6], 16)
+            color = (r, g, b)
+
+            # Create an image with the generated color
+            img = Image.new('RGB', (256, 256), color=color)
+            # Save the icon
+            img.save(icon_path)
+            logging.info(f"Created icon at {icon_path} with color {color}")
+        except Exception as e:
+            logging.error(f"Failed to create icon for mod '{mod_name}': {e}")
+            # Optionally, create a placeholder icon
+            create_placeholder_icon(package_path)
+            return
+
+    # Copy the icon into the package
+    try:
+        shutil.copy(icon_path, os.path.join(package_path, 'icon.png'))
+        logging.info(f"Copied icon for mod '{mod_name}' into package.")
+    except Exception as e:
+        logging.error(f"Failed to copy icon into package for mod '{mod_name}': {e}")
+
+def prepare_package(mod_info, file_path, mod_entry, nexus_game_domain):
     """
     Prepares the mod package for Thunderstore.
     """
@@ -152,24 +199,14 @@ def prepare_package(mod_info, file_path, mod_entry, nexus_game_domain, all_mods)
         logging.error(f"Failed to unpack archive {file_path}: {e}")
         return None
 
-    # Retrieve dependencies from mod_entry and format them
-    raw_dependencies = mod_entry.get('dependencies', [])
-    formatted_dependencies = []
-    for dep_name in raw_dependencies:
-        dep_entry = next((mod for mod in all_mods if mod['name'] == dep_name), None)
-        if dep_entry and dep_entry.get('last_processed_version'):
-            dep_author = dep_entry.get('author', 'UnknownAuthor')
-            dep_version = dep_entry.get('last_processed_version')
-            formatted_dependency = f"{dep_author}-{dep_name}-{dep_version}"
-            formatted_dependencies.append(formatted_dependency)
-        else:
-            logging.warning(f"Dependency '{dep_name}' for mod '{mod_info.get('name')}' not found or not processed yet.")
+    # Retrieve dependencies directly from mod_entry
+    dependencies = mod_entry.get('dependencies', [])
 
     # Create required files
-    create_manifest(package_path, mod_name, version, description, formatted_dependencies, website_url)
+    create_manifest(package_path, mod_name, version, description, dependencies, website_url)
     create_readme(package_path, mod_info)
     create_changelog(package_path, mod_info)
-    create_placeholder_icon(package_path)
+    create_icon(package_path, mod_entry)
 
     # Zip the package
     package_zip = f"{package_path}.zip"
@@ -226,7 +263,7 @@ def download_mods(config, session, nexus_game_domain, game_id):
             continue
 
         # Prepare package
-        package_zip = prepare_package(mod_info, file_path, mod_entry, nexus_game_domain, mods)
+        package_zip = prepare_package(mod_info, file_path, mod_entry, nexus_game_domain)
         if not package_zip:
             logging.error(f"Failed to prepare package for mod ID {mod_id}")
             continue
@@ -377,6 +414,16 @@ def upload_mods(config):
         except Exception as e:
             logging.error(f"Error uploading {package_zip}: {e}")
 
+def reset_versions(config, filename='mods.json'):
+    """
+    Resets the last_processed_version field to null for all mods.
+    """
+    mods = config.get('mods', [])
+    for mod_entry in mods:
+        mod_entry['last_processed_version'] = None
+    save_config(config, filename)
+    logging.info("All last_processed_version fields have been reset to null.")
+
 def main():
     """
     Main function to coordinate downloading and uploading mods.
@@ -391,6 +438,16 @@ def main():
     if not all([nexus_game_domain, thunderstore_game_domain, game_id]):
         logging.error("nexus_game_domain, thunderstore_game_domain, and game_id must be set in mods.json.")
         sys.exit(1)
+
+    # Check for RESET_VERSIONS environment variable
+    reset_versions_flag = os.getenv('RESET_VERSIONS', 'False').lower() in ('true', '1', 'yes')
+    if reset_versions_flag:
+        reset_versions(config)
+        # Exit after resetting if desired
+        logging.info("Exiting after resetting versions.")
+        sys.exit(0)
+    else:
+        logging.info("RESET_VERSIONS not set. Proceeding without resetting versions.")
 
     # Initialize a requests.Session
     session = requests.Session()
@@ -408,35 +465,33 @@ def main():
         logging.error("NEXUS_API_KEY not set. Please set it as an environment variable.")
         sys.exit(1)
 
-    # Fetch and set session cookies
+    # Attempt to fetch cookies using browser_cookie3
+    cookies_set = False
     try:
         import browser_cookie3
         cj = browser_cookie3.load(domain_name='nexusmods.com')
         session.cookies.update(cj)
-        logging.info("Session cookies have been set.")
+        logging.info("Session cookies have been automatically collected using browser_cookie3.")
+        cookies_set = True
     except Exception as e:
-        logging.warning(f"Failed to fetch browser cookies: {e}")
+        logging.warning(f"Automatic cookie collection failed: {e}")
 
-    # Prompt user to select action
-    print("\nSelect an action:")
-    print("1. Download mods from Nexus Mods")
-    print("2. Upload mods to Thunderstore")
-    print("3. Download and upload mods")
-    print("4. Exit")
-    choice = input("Enter your choice (1-4): ")
+    # If cookies were not set automatically, attempt to use environment variables
+    if not cookies_set:
+        session_cookies = {
+            'sid': os.getenv('NEXUS_SESSION_SID')
+            # Add other necessary cookies here
+        }
+        if all(session_cookies.values()):
+            session.cookies.update(session_cookies)
+            logging.info("Session cookies have been set from environment variables.")
+        else:
+            logging.error("Session cookies could not be set. Please ensure you're logged into Nexus Mods or provide cookies via environment variables.")
+            sys.exit(1)
 
-    if choice == '1':
-        download_mods(config, session, nexus_game_domain, game_id)
-    elif choice == '2':
-        upload_mods(config)
-    elif choice == '3':
-        download_mods(config, session, nexus_game_domain, game_id)
-        upload_mods(config)
-    elif choice == '4':
-        sys.exit(0)
-    else:
-        print("Invalid choice.")
-        sys.exit(1)
+    # Run both download and upload processes
+    download_mods(config, session, nexus_game_domain, game_id)
+    upload_mods(config)
 
 if __name__ == '__main__':
     main()
